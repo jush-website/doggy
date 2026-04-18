@@ -57,8 +57,9 @@ const generateRandomOffset = (baseLat, baseLng, radiusInMeters = 200) => {
 export default function App() {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); // 這是給登入驗證用的載入狀態
   const [authError, setAuthError] = useState(null);
+  const [tailwindLoaded, setTailwindLoaded] = useState(false); // 新增：追蹤 Tailwind 是否載入完成
 
   // 動態載入 Tailwind CSS (將樣式引擎直接寫入 JS 載入)
   useEffect(() => {
@@ -66,7 +67,13 @@ export default function App() {
       const script = document.createElement('script');
       script.id = 'tailwind-script';
       script.src = "https://cdn.tailwindcss.com";
+      // 當腳本載入完成後，切換狀態
+      script.onload = () => {
+        setTailwindLoaded(true);
+      };
       document.head.appendChild(script);
+    } else {
+      setTailwindLoaded(true);
     }
   }, []);
 
@@ -141,6 +148,16 @@ export default function App() {
     await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'userData', 'profile'), newProfile);
     setProfile(newProfile);
   };
+
+  // 在 Tailwind 載入完成前，顯示原生的行內樣式 (Inline CSS) 載入畫面來掩蓋醜醜的未排版畫面
+  if (!tailwindLoaded) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', backgroundColor: '#111827', alignItems: 'center', justifyContent: 'center', fontFamily: 'sans-serif' }}>
+        <div style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '16px', color: '#FBBF24' }}>汪星人佔領計畫</div>
+        <div style={{ fontSize: '16px', color: '#D1D5DB' }}>系統環境載入中...</div>
+      </div>
+    );
+  }
 
   if (!app) return <div className="p-8 text-center bg-gray-900 text-white h-screen flex justify-center items-center">正在初始化環境...請稍候。</div>;
 
