@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Map, Camera, Backpack, Swords, Crosshair, Droplets, MapPin, Trophy, Shield, Zap, Search } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, onSnapshot, getDoc, updateDoc } from 'firebase/firestore';
 
 // --- Firebase Configuration ---
