@@ -60,6 +60,16 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState(null);
 
+  // 動態載入 Tailwind CSS (將樣式引擎直接寫入 JS 載入)
+  useEffect(() => {
+    if (!document.getElementById('tailwind-script')) {
+      const script = document.createElement('script');
+      script.id = 'tailwind-script';
+      script.src = "https://cdn.tailwindcss.com";
+      document.head.appendChild(script);
+    }
+  }, []);
+
   // 初始化 Firebase Auth
   useEffect(() => {
     if (!auth) return;
