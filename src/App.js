@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Map, Camera, Backpack, Swords, Crosshair, Droplets, MapPin, Trophy, Shield, Zap, Search } from 'lucide-react';
+import { Map, Camera, Backpack, Swords, Crosshair, Droplets, MapPin, Trophy, Shield, Zap, Search, Sparkles, Users, User, X, Sword } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, onSnapshot, getDoc, updateDoc } from 'firebase/firestore';
+import { getFirestore, collection, doc, setDoc, onSnapshot, getDoc, updateDoc, deleteDoc, query, getDocs, deleteField } from 'firebase/firestore';
 
 // --- Firebase Configuration ---
-// 這裡已經換成你的專屬 Firebase 設定
 const firebaseConfig = {
   apiKey: "AIzaSyB4d2roiEbHKXp7kBcDUe6wgxI1G1Lh0HM",
   authDomain: "doggame-dfaa9.firebaseapp.com",
@@ -20,8 +19,6 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'doggo-turf-war';
 
-// --- Constants & Mock Data ---
-// 預設經緯度 (屏東內埔)
 const DEFAULT_LAT = 22.611;
 const DEFAULT_LNG = 120.565;
 const FACTIONS = {
@@ -29,8 +26,13 @@ const FACTIONS = {
   stray: { name: '流浪狗幫', color: 'bg-orange-500', text: 'text-orange-500', icon: '🐺' }
 };
 
-// --- Helper Functions ---
-// 計算經緯度距離 (公尺)
+const ITEM_TYPES = [
+  { id: 'bone', name: '大骨頭', icon: '🦴', power: 5 },
+  { id: 'meat', name: '肉塊', icon: '🥩', power: 10 },
+  { id: 'herb', name: '療癒草', icon: '🌿', power: 3 },
+  { id: 'shoe', name: '破鞋子', icon: '👟', power: 2 }
+];
+
 const getDistance = (lat1, lon1, lat2, lon2) => {
   const R = 6371e3;
   const φ1 = lat1 * Math.PI/180;
@@ -42,81 +44,56 @@ const getDistance = (lat1, lon1, lat2, lon2) => {
   return R * c;
 };
 
-// 隨機生成附近座標
-const generateRandomOffset = (baseLat, baseLng, radiusInMeters = 200) => {
-  const radiusInDegrees = radiusInMeters / 111320;
-  const u = Math.random();
-  const v = Math.random();
-  const w = radiusInDegrees * Math.sqrt(u);
-  const t = 2 * Math.PI * v;
-  const x = w * Math.cos(t) / Math.cos(baseLat * Math.PI/180);
-  const y = w * Math.sin(t);
-  return { lat: baseLat + y, lng: baseLng + x };
-};
-
 export default function App() {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(true); // 這是給登入驗證用的載入狀態
+  const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState(null);
-  const [tailwindLoaded, setTailwindLoaded] = useState(false); // 新增：追蹤 Tailwind 是否載入完成
+  const [libsLoaded, setLibsLoaded] = useState(false);
 
-  // 動態載入 Tailwind CSS (將樣式引擎直接寫入 JS 載入)
+  // 載入 Tailwind 與 Leaflet
   useEffect(() => {
-    if (!document.getElementById('tailwind-script')) {
-      const script = document.createElement('script');
-      script.id = 'tailwind-script';
-      script.src = "https://cdn.tailwindcss.com";
-      // 當腳本載入完成後，切換狀態
-      script.onload = () => {
-        setTailwindLoaded(true);
-      };
-      document.head.appendChild(script);
-    } else {
-      setTailwindLoaded(true);
-    }
+    const loadLibs = async () => {
+      // 載入 Tailwind
+      if (!document.getElementById('tailwind-script')) {
+        const tw = document.createElement('script');
+        tw.id = 'tailwind-script';
+        tw.src = "https://cdn.tailwindcss.com";
+        document.head.appendChild(tw);
+      }
+      // 載入 Leaflet CSS
+      if (!document.getElementById('leaflet-css')) {
+        const link = document.createElement('link');
+        link.id = 'leaflet-css';
+        link.rel = 'stylesheet';
+        link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+        document.head.appendChild(link);
+      }
+      // 載入 Leaflet JS
+      if (!window.L) {
+        const script = document.createElement('script');
+        script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+        script.onload = () => setLibsLoaded(true);
+        document.head.appendChild(script);
+      } else {
+        setLibsLoaded(true);
+      }
+    };
+    loadLibs();
   }, []);
 
-  // 初始化 Firebase Auth
   useEffect(() => {
     if (!auth) return;
-
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        if (!profile) loadProfile(currentUser.uid);
+        loadProfile(currentUser.uid);
       } else {
-        setLoading(false); // 未登入，解除載入狀態顯示登入畫面
+        setLoading(false);
       }
     });
     return () => unsubscribe();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const handleGoogleLogin = async () => {
-    try {
-      setLoading(true);
-      setAuthError(null);
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-    } catch (err) {
-      console.error("Google 登入失敗:", err);
-      setAuthError(err.message);
-      setLoading(false);
-    }
-  };
-
-  const handleAnonymousLogin = async () => {
-    try {
-      setLoading(true);
-      setAuthError(null);
-      await signInAnonymously(auth);
-    } catch (err) {
-      console.error("匿名登入失敗:", err);
-      setAuthError(err.message);
-      setLoading(false);
-    }
-  };
 
   const loadProfile = async (uid) => {
     if (!db) return;
@@ -126,11 +103,32 @@ export default function App() {
       if (docSnap.exists()) {
         setProfile(docSnap.data());
       } else {
-        setProfile(null); // 需要選擇陣營
+        setProfile(null);
       }
     } catch (err) {
-      console.error("載入 Profile 失敗", err);
+      console.error("Profile Error", err);
     } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    try {
+      setLoading(true);
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (err) {
+      setAuthError(err.message);
+      setLoading(false);
+    }
+  };
+
+  const handleAnonymousLogin = async () => {
+    try {
+      setLoading(true);
+      await signInAnonymously(auth);
+    } catch (err) {
+      setAuthError(err.message);
       setLoading(false);
     }
   };
@@ -149,56 +147,32 @@ export default function App() {
     setProfile(newProfile);
   };
 
-  // 在 Tailwind 載入完成前，顯示原生的行內樣式 (Inline CSS) 載入畫面來掩蓋醜醜的未排版畫面
-  if (!tailwindLoaded) {
+  if (!libsLoaded) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', backgroundColor: '#111827', alignItems: 'center', justifyContent: 'center', fontFamily: 'sans-serif' }}>
         <div style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '16px', color: '#FBBF24' }}>汪星人佔領計畫</div>
-        <div style={{ fontSize: '16px', color: '#D1D5DB' }}>系統環境載入中...</div>
+        <div style={{ fontSize: '14px', color: '#9CA3AF' }}>正在定位台灣地圖資訊...</div>
       </div>
     );
   }
 
-  if (!app) return <div className="p-8 text-center bg-gray-900 text-white h-screen flex justify-center items-center">正在初始化環境...請稍候。</div>;
+  if (loading) return <div className="flex h-screen items-center justify-center bg-gray-900 text-white font-bold animate-pulse text-xl">汪汪載入中...</div>;
 
-  if (loading) return <div className="flex h-screen items-center justify-center bg-gray-900 text-white font-bold text-xl animate-pulse">載入中...</div>;
-
-  // 尚未登入時顯示登入畫面
   if (!user) {
     return (
       <div className="flex flex-col h-screen bg-gray-900 text-white items-center justify-center p-6 text-center">
-        <h1 className="text-4xl font-bold mb-8 text-yellow-400">汪星人佔領計畫</h1>
-        <p className="mb-8 text-gray-300">請登入以保留您的遊戲進度</p>
-        
+        <h1 className="text-5xl font-bold mb-4 text-yellow-400">汪星人佔領計畫</h1>
+        <p className="mb-8 text-gray-400">進入真實世界的街道搶奪地盤！</p>
         <div className="flex flex-col gap-4 w-full max-w-xs">
-          <button 
-            onClick={handleGoogleLogin}
-            className="w-full bg-white text-gray-900 font-bold py-3 px-4 rounded-full flex items-center justify-center gap-2 hover:bg-gray-100 transition-colors"
-          >
-            <svg className="w-5 h-5" viewBox="0 0 24 24">
-              <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-            </svg>
-            使用 Google 登入
+          <button onClick={handleGoogleLogin} className="w-full bg-white text-gray-900 font-bold py-3 px-4 rounded-full flex items-center justify-center gap-2 hover:bg-gray-200 transition-all">
+            <svg className="w-5 h-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+            Google 快速登入
           </button>
-
-          <button 
-            onClick={handleAnonymousLogin}
-            className="w-full bg-gray-700 text-white font-bold py-3 px-4 rounded-full hover:bg-gray-600 transition-colors"
-          >
-            訪客登入 (不保留進度)
+          <button onClick={handleAnonymousLogin} className="w-full bg-gray-700 text-white font-bold py-3 px-4 rounded-full hover:bg-gray-600 transition-all">
+            訪客遊玩
           </button>
         </div>
-
-        {authError && (
-          <div className="mt-6 bg-red-900/50 border border-red-500 text-red-200 p-4 rounded-xl text-sm text-left max-w-xs">
-            <p className="font-bold mb-1">登入發生錯誤：</p>
-            <p className="break-all">{authError}</p>
-            <p className="mt-2 text-xs text-red-300">請確保 Firebase Console 中已啟用對應的登入方法，或網域已加入白名單。</p>
-          </div>
-        )}
+        {authError && <div className="mt-4 text-red-400 text-xs">{authError}</div>}
       </div>
     );
   }
@@ -206,26 +180,15 @@ export default function App() {
   if (!profile) {
     return (
       <div className="flex flex-col h-screen bg-gray-900 text-white items-center justify-center p-6">
-        <h1 className="text-4xl font-bold mb-8 text-yellow-400">汪星人佔領計畫</h1>
-        <p className="mb-8 text-gray-300 text-center">歡迎來到狗狗的地盤大戰！<br/>請選擇你的陣營來開始遊戲。</p>
-        
-        <div className="flex gap-6 w-full max-w-md">
-          <button 
-            onClick={() => handleSelectFaction('owner')}
-            className="flex-1 bg-blue-600 hover:bg-blue-500 p-6 rounded-2xl flex flex-col items-center transition-transform hover:scale-105"
-          >
-            <span className="text-5xl mb-4">🐕</span>
-            <h2 className="text-xl font-bold">主人幫</h2>
-            <p className="text-sm text-blue-200 mt-2 text-center">伙食好，裝備精良，保衛家園！</p>
+        <h1 className="text-4xl font-bold mb-8 text-yellow-400">加入幫派</h1>
+        <div className="flex gap-4 w-full max-w-md">
+          <button onClick={() => handleSelectFaction('owner')} className="flex-1 bg-blue-600 p-8 rounded-[40px] flex flex-col items-center hover:scale-105 transition-all shadow-xl">
+            <span className="text-7xl mb-4">🐕</span>
+            <h2 className="text-2xl font-bold">主人幫</h2>
           </button>
-          
-          <button 
-            onClick={() => handleSelectFaction('stray')}
-            className="flex-1 bg-orange-600 hover:bg-orange-500 p-6 rounded-2xl flex flex-col items-center transition-transform hover:scale-105"
-          >
-            <span className="text-5xl mb-4">🐺</span>
-            <h2 className="text-xl font-bold">流浪狗幫</h2>
-            <p className="text-sm text-orange-200 mt-2 text-center">自由自在，戰鬥經驗豐富，佔領街頭！</p>
+          <button onClick={() => handleSelectFaction('stray')} className="flex-1 bg-orange-600 p-8 rounded-[40px] flex flex-col items-center hover:scale-105 transition-all shadow-xl">
+            <span className="text-7xl mb-4">🐺</span>
+            <h2 className="text-2xl font-bold">流浪狗幫</h2>
           </button>
         </div>
       </div>
@@ -235,510 +198,360 @@ export default function App() {
   return <GameCore user={user} profile={profile} setProfile={setProfile} />;
 }
 
-// ==========================================
-// 遊戲核心邏輯與 UI
-// ==========================================
 function GameCore({ user, profile, setProfile }) {
   const [activeTab, setActiveTab] = useState('map');
   const [location, setLocation] = useState({ lat: DEFAULT_LAT, lng: DEFAULT_LNG });
   const [landmarks, setLandmarks] = useState([]);
   const [items, setItems] = useState([]);
   const [selectedTarget, setSelectedTarget] = useState(null);
-  
-  // 取得 GPS 位置
+  const [battleOpponent, setBattleOpponent] = useState(null);
+
   useEffect(() => {
     if ("geolocation" in navigator) {
       const watchId = navigator.geolocation.watchPosition(
         (pos) => setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-        (err) => console.warn("GPS error, using default", err),
-        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+        null, { enableHighAccuracy: true }
       );
       return () => navigator.geolocation.clearWatch(watchId);
     }
   }, []);
 
-  // 監聽公開地標資料 (Firestore)
   useEffect(() => {
-    if (!user || !db) return;
-    const landmarksRef = collection(db, 'artifacts', appId, 'public', 'data', 'landmarks');
-    
-    const unsubscribe = onSnapshot(landmarksRef, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      
-      // 如果沒有地標，幫忙生成幾個假資料 (僅供原型測試)
-      if (data.length === 0) {
-        seedInitialLandmarks(location.lat, location.lng);
-      } else {
-        setLandmarks(data);
-      }
-    }, (error) => {
-      console.error("Fetch landmarks error:", error);
+    const unsubscribe = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'landmarks'), (snapshot) => {
+      setLandmarks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
-
-    // 模擬隨機掉落物品 (存在記憶體中，因為 Firestore 不建議快速建立大量短暫文件，正式版應由 Backend 處理)
-    const mockItems = Array.from({length: 5}).map((_, i) => ({
-      id: `item_${i}`,
-      type: ['bone', 'meat', 'herb', 'shoe'][Math.floor(Math.random()*4)],
-      ...generateRandomOffset(location.lat, location.lng, 150)
-    }));
-    setItems(mockItems);
-
     return () => unsubscribe();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, location.lat, location.lng]);
+  }, [user]);
 
-  const seedInitialLandmarks = async (lat, lng) => {
-    if (!db) return;
-    const names = ['公園大樹', '消防栓', '電線桿', '廢棄輪胎', '超商門口'];
-    for (let i = 0; i < 5; i++) {
-      const coords = generateRandomOffset(lat, lng, 300);
-      const newLandmark = {
-        name: names[i],
-        lat: coords.lat,
-        lng: coords.lng,
-        ownerFaction: null,
-        ownerId: null,
-        ownerName: null,
-        captureCount: 0
-      };
-      try {
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'landmarks', `lm_${i}`), newLandmark);
-      } catch(e) {
-        console.error("無法建立地標:", e);
-      }
-    }
-  };
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'items'), (snapshot) => {
+      setItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+    return () => unsubscribe();
+  }, []);
 
-  const handleCapture = async (target) => {
-    if (!user || !db) return;
-    
+  const handlePickup = async (item) => {
     try {
-      // 更新地標
-      const lmRef = doc(db, 'artifacts', appId, 'public', 'data', 'landmarks', target.id);
-      await updateDoc(lmRef, {
-        ownerFaction: profile.faction,
-        ownerId: user.uid,
-        ownerName: `${FACTIONS[profile.faction].name}勇士`,
-        captureCount: (target.captureCount || 0) + 1
-      });
-
-      // 增加玩家經驗與戰力
-      const newXp = profile.xp + 50;
-      let newLevel = profile.level;
-      let newPower = profile.power + 10;
-      
-      if (newXp >= newLevel * 100) {
-        newLevel += 1;
-        newPower += 50; // 升級大加成
-      }
-
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id));
+      const newInv = [...(profile.inventory || []), { ...item, collectedAt: Date.now() }];
       const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'userData', 'profile');
-      const updatedProfile = { ...profile, xp: newXp, level: newLevel, power: newPower };
-      await updateDoc(profileRef, { xp: newXp, level: newLevel, power: newPower });
-      setProfile(updatedProfile);
-    } catch(err) {
-      console.error("佔領更新失敗:", err);
-      alert("佔領更新失敗，請檢查 Firestore 權限設定！");
-    }
-    
+      await updateDoc(profileRef, { inventory: newInv, power: profile.power + (item.power || 5) });
+      setProfile(prev => ({ ...prev, inventory: newInv, power: prev.power + (item.power || 5) }));
+    } catch (err) { console.error(err); }
     setSelectedTarget(null);
     setActiveTab('map');
   };
 
-  const pickUpItem = async (item) => {
-    // 簡單的本機物品拾取
-    const updatedItems = items.filter(i => i.id !== item.id);
-    setItems(updatedItems);
-
-    try {
-      const newInventory = [...(profile.inventory || []), { ...item, collectedAt: Date.now() }];
-      const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'userData', 'profile');
-      await updateDoc(profileRef, { inventory: newInventory, power: profile.power + 5 });
-      
-      setProfile(prev => ({ ...prev, inventory: newInventory, power: prev.power + 5 }));
-    } catch(err) {
-      console.error("拾取更新失敗:", err);
-    }
+  const handleCapture = async (target) => {
+    const lmRef = doc(db, 'artifacts', appId, 'public', 'data', 'landmarks', target.id);
+    await updateDoc(lmRef, {
+      ownerFaction: profile.faction,
+      ownerId: user.uid,
+      ownerName: user.displayName || '無名勇士',
+      captureCount: (target.captureCount || 0) + 1
+    });
+    const newXp = profile.xp + 100;
+    const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'userData', 'profile');
+    await updateDoc(profileRef, { xp: newXp });
+    setProfile(prev => ({ ...prev, xp: newXp }));
+    setSelectedTarget(null);
+    setActiveTab('map');
   };
 
   return (
     <div className="flex flex-col h-screen bg-gray-950 text-white font-sans overflow-hidden">
-      {/* Header */}
-      <div className={`p-4 ${FACTIONS[profile.faction].color} flex justify-between items-center shadow-lg z-10`}>
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">{FACTIONS[profile.faction].icon}</span>
-          <div>
-            <h1 className="font-bold">{FACTIONS[profile.faction].name}</h1>
-            <div className="text-xs font-medium bg-black/20 px-2 py-0.5 rounded-full inline-block">
-              Lv.{profile.level} | 戰力: {profile.power}
+      {!battleOpponent && (
+        <div className={`p-4 ${FACTIONS[profile.faction].color} flex justify-between items-center shadow-2xl z-50`}>
+          <div className="flex items-center gap-3">
+            <div className="bg-white/20 p-2 rounded-xl text-2xl">{FACTIONS[profile.faction].icon}</div>
+            <div>
+              <div className="text-xs opacity-70">Lv.{profile.level} {FACTIONS[profile.faction].name}</div>
+              <div className="font-black text-lg leading-tight">戰力 {profile.power}</div>
             </div>
           </div>
-        </div>
-        <div className="text-right">
-          <div className="text-xs opacity-80">經驗值</div>
-          <div className="w-24 h-2 bg-black/30 rounded-full mt-1 overflow-hidden">
-            <div 
-              className="h-full bg-white transition-all duration-500" 
-              style={{ width: `${(profile.xp % (profile.level * 100)) / (profile.level * 100) * 100}%` }}
-            />
+          <div className="bg-black/20 px-4 py-2 rounded-2xl text-right">
+            <div className="text-[10px] uppercase tracking-widest opacity-60">GPS 即時連線</div>
+            <div className="text-xs font-bold text-green-400 animate-pulse">● TAIWAN LIVE</div>
           </div>
         </div>
+      )}
+
+      <div className="flex-1 relative">
+        {battleOpponent ? (
+          <BattleView player={profile} opponent={battleOpponent} onEnd={(win) => {
+            if (win) {
+              const pref = doc(db, 'artifacts', appId, 'users', user.uid, 'userData', 'profile');
+              updateDoc(pref, { xp: profile.xp + 200, power: profile.power + 20 });
+              setProfile(prev => ({ ...prev, xp: prev.xp + 200, power: prev.power + 20 }));
+            }
+            setBattleOpponent(null);
+          }} />
+        ) : (
+          <>
+            {activeTab === 'map' && (
+              <RealMapScreen location={location} landmarks={landmarks} items={items} profile={profile} onSelect={(t) => { setSelectedTarget(t); setActiveTab('ar'); }} />
+            )}
+            {activeTab === 'ar' && (
+              <ARScreen location={location} target={selectedTarget} onCapture={handleCapture} onPickup={handlePickup} onCancel={() => setActiveTab('map')} />
+            )}
+            {activeTab === 'backpack' && <BackpackScreen profile={profile} />}
+            {activeTab === 'arena' && <ArenaScreen user={user} profile={profile} location={location} onBattle={setBattleOpponent} />}
+          </>
+        )}
       </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 relative overflow-hidden">
-        {activeTab === 'map' && (
-          <MapScreen 
-            location={location} 
-            landmarks={landmarks} 
-            items={items}
-            profile={profile}
-            onSelectTarget={(target) => {
-              setSelectedTarget(target);
-              setActiveTab('ar');
-            }}
-            onPickUpItem={pickUpItem}
-          />
-        )}
-        {activeTab === 'ar' && (
-          <ARScreen 
-            target={selectedTarget} 
-            onCapture={handleCapture}
-            onCancel={() => {
-              setSelectedTarget(null);
-              setActiveTab('map');
-            }}
-          />
-        )}
-        {activeTab === 'backpack' && <BackpackScreen profile={profile} />}
-        {activeTab === 'arena' && <ArenaScreen profile={profile} />}
-      </div>
-
-      {/* Bottom Navigation */}
-      <div className="bg-gray-900 border-t border-gray-800 flex justify-around p-2 pb-safe z-10">
-        <NavButton icon={<Map />} label="地圖" active={activeTab === 'map'} onClick={() => setActiveTab('map')} />
-        <NavButton icon={<Camera />} label="AR佔領" active={activeTab === 'ar'} onClick={() => setActiveTab('ar')} />
-        <NavButton icon={<Backpack />} label="背包" active={activeTab === 'backpack'} onClick={() => setActiveTab('backpack')} />
-        <NavButton icon={<Swords />} label="競技場" active={activeTab === 'arena'} onClick={() => setActiveTab('arena')} />
-      </div>
+      {!battleOpponent && (
+        <nav className="bg-gray-900/90 backdrop-blur-md border-t border-white/10 flex justify-around p-2 pb-6 z-50">
+          <NavBtn icon={<Map />} label="地圖" active={activeTab === 'map'} onClick={() => setActiveTab('map')} />
+          <NavBtn icon={<Camera />} label="相機" active={activeTab === 'ar'} onClick={() => setActiveTab('ar')} />
+          <NavBtn icon={<Backpack />} label="背包" active={activeTab === 'backpack'} onClick={() => setActiveTab('backpack')} />
+          <NavBtn icon={<Trophy />} label="競技場" active={activeTab === 'arena'} onClick={() => setActiveTab('arena')} />
+        </nav>
+      )}
     </div>
   );
 }
 
 // ==========================================
-// 地圖雷達畫面
+// 真實台灣地圖組件 (Leaflet)
 // ==========================================
-function MapScreen({ location, landmarks, items, profile, onSelectTarget, onPickUpItem }) {
-  const METERS_PER_DEGREE = 111320;
-
-  const calculatePosition = (targetLat, targetLng) => {
-    const dy = (targetLat - location.lat) * METERS_PER_DEGREE;
-    const dx = (targetLng - location.lng) * METERS_PER_DEGREE * Math.cos(location.lat * Math.PI/180);
-    // 將公尺轉換為百分比 (假設雷達寬度 = 600 公尺)
-    const percentY = 50 - (dy / 600) * 100;
-    const percentX = 50 + (dx / 600) * 100;
-    return { top: `${percentY}%`, left: `${percentX}%` };
-  };
-
-  return (
-    <div className="relative w-full h-full bg-slate-800 overflow-hidden flex items-center justify-center">
-      {/* 雷達底圖 */}
-      <div className="absolute inset-0 opacity-20 pointer-events-none" 
-           style={{ backgroundImage: 'radial-gradient(circle at center, #10b981 1px, transparent 1px), radial-gradient(circle at center, #10b981 1px, transparent 1px)', backgroundSize: '40px 40px', backgroundPosition: '0 0, 20px 20px' }}>
-      </div>
-      
-      {/* 雷達掃描動畫 */}
-      <div className="absolute w-full h-full rounded-full border-4 border-emerald-500/20 animate-ping" style={{ maxWidth: '400px', maxHeight: '400px' }}></div>
-      <div className="absolute w-[800px] h-[800px] bg-gradient-to-tr from-emerald-500/10 to-transparent rounded-full animate-spin pointer-events-none" style={{ animationDuration: '4s' }}></div>
-
-      {/* 中心點 (玩家) */}
-      <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-20 flex flex-col items-center">
-        <div className={`w-8 h-8 rounded-full border-2 border-white shadow-[0_0_15px_rgba(255,255,255,0.5)] flex items-center justify-center text-lg z-10 ${FACTIONS[profile.faction].color}`}>
-          {FACTIONS[profile.faction].icon}
-        </div>
-        <div className="w-12 h-12 bg-white/20 rounded-full absolute animate-pulse"></div>
-      </div>
-
-      {/* 地標 */}
-      {landmarks.map(lm => {
-        const pos = calculatePosition(lm.lat, lm.lng);
-        const dist = getDistance(location.lat, location.lng, lm.lat, lm.lng);
-        const isCapturable = dist < 50; // 50公尺內可佔領
-        const isMine = lm.ownerFaction === profile.faction;
-
-        return (
-          <div key={lm.id} className="absolute transform -translate-x-1/2 -translate-y-1/2 z-10" style={pos}>
-            <button 
-              onClick={() => isCapturable ? onSelectTarget(lm) : alert(`距離太遠！還差 ${Math.round(dist - 50)} 公尺`)}
-              className={`group flex flex-col items-center transition-transform ${isCapturable ? 'hover:scale-125' : 'opacity-70'}`}
-            >
-              <div className="relative">
-                <MapPin className={`w-10 h-10 ${lm.ownerFaction ? FACTIONS[lm.ownerFaction].text : 'text-gray-400'} drop-shadow-lg`} fill="currentColor" />
-                {isCapturable && !isMine && <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full animate-bounce"></div>}
-              </div>
-              <span className="text-[10px] font-bold bg-black/60 px-2 py-1 rounded whitespace-nowrap mt-1">
-                {lm.name} ({Math.round(dist)}m)
-              </span>
-            </button>
-          </div>
-        );
-      })}
-
-      {/* 物品 */}
-      {items.map(item => {
-        const pos = calculatePosition(item.lat, item.lng);
-        const dist = getDistance(location.lat, location.lng, item.lat, item.lng);
-        const isPickable = dist < 30; // 30公尺內可撿起
-
-        const itemIcons = { bone: '🦴', meat: '🥩', herb: '🌿', shoe: '👟' };
-        
-        return (
-          <div key={item.id} className="absolute transform -translate-x-1/2 -translate-y-1/2" style={pos}>
-             <button 
-              onClick={() => isPickable ? onPickUpItem(item) : null}
-              className={`text-2xl drop-shadow-lg transition-transform ${isPickable ? 'animate-bounce hover:scale-125' : 'opacity-50'}`}
-            >
-              {itemIcons[item.type]}
-            </button>
-          </div>
-        );
-      })}
-      
-      {/* 提示訊息 */}
-      <div className="absolute top-4 left-4 right-4 bg-black/60 text-white p-3 rounded-lg flex items-center gap-3 backdrop-blur-sm z-30">
-        <Search className="w-5 h-5 text-emerald-400" />
-        <span className="text-sm">在地圖上尋找地標，靠近至 50m 內即可進行佔領。地上也會有隨機掉落的物品喔！</span>
-      </div>
-    </div>
-  );
-}
-
-// ==========================================
-// AR 佔領畫面
-// ==========================================
-function ARScreen({ target, onCapture, onCancel }) {
-  const videoRef = useRef(null);
-  const [streamActive, setStreamActive] = useState(false);
-  const [peeing, setPeeing] = useState(false);
+function RealMapScreen({ location, landmarks, items, profile, onSelect }) {
+  const mapRef = useRef(null);
+  const mapInstance = useRef(null);
+  const markersRef = useRef({});
 
   useEffect(() => {
-    let stream = null;
-    const startCamera = async () => {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: 'environment' } // 請求後置鏡頭
-        });
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          setStreamActive(true);
-        }
-      } catch (err) {
-        console.error("Camera access denied or unavailable", err);
+    if (!window.L || !mapRef.current) return;
+
+    // 初始化地圖
+    if (!mapInstance.current) {
+      mapInstance.current = window.L.map(mapRef.current, {
+        zoomControl: false,
+        attributionControl: false
+      }).setView([location.lat, location.lng], 16);
+
+      // 使用 CartoDB 的暗色地圖樣式，非常適合遊戲
+      window.L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19
+      }).addTo(mapInstance.current);
+    } else {
+      mapInstance.current.setView([location.lat, location.lng]);
+    }
+
+    const L = window.L;
+
+    // 1. 玩家標記 (Player)
+    if (!markersRef.current['player']) {
+      const playerIcon = L.divIcon({
+        html: `<div class="flex items-center justify-center w-12 h-12 rounded-full border-4 border-white shadow-xl ${FACTIONS[profile.faction].color} text-2xl animate-bounce">${FACTIONS[profile.faction].icon}</div>`,
+        className: 'custom-div-icon',
+        iconSize: [48, 48]
+      });
+      markersRef.current['player'] = L.marker([location.lat, location.lng], { icon: playerIcon }).addTo(mapInstance.current);
+    } else {
+      markersRef.current['player'].setLatLng([location.lat, location.lng]);
+    }
+
+    // 2. 清除舊的地標與物品標記
+    Object.keys(markersRef.current).forEach(key => {
+      if (key !== 'player') {
+        mapInstance.current.removeLayer(markersRef.current[key]);
+        delete markersRef.current[key];
       }
-    };
-    startCamera();
+    });
 
-    return () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, []);
+    // 3. 繪製地標 (Landmarks)
+    landmarks.forEach(lm => {
+      const icon = L.divIcon({
+        html: `<div class="flex flex-col items-center">
+                <div class="text-3xl filter drop-shadow-md">${lm.ownerFaction ? FACTIONS[lm.ownerFaction].icon : '🚩'}</div>
+                <div class="bg-black/70 text-[10px] text-white px-2 py-0.5 rounded-full mt-1 border border-white/20 whitespace-nowrap">${lm.name}</div>
+               </div>`,
+        className: 'custom-div-icon',
+        iconSize: [60, 60]
+      });
+      const marker = L.marker([lm.lat, lm.lng], { icon }).addTo(mapInstance.current);
+      marker.on('click', () => onSelect(lm));
+      markersRef.current[`lm_${lm.id}`] = marker;
+    });
 
-  const handlePee = () => {
-    setPeeing(true);
-    // 模擬動畫時間後完成佔領
-    setTimeout(() => {
-      setPeeing(false);
-      onCapture(target);
-    }, 2000);
-  };
+    // 4. 繪製物品 (Items)
+    items.forEach(item => {
+      const icon = L.divIcon({
+        html: `<div class="text-3xl animate-pulse filter drop-shadow-lg">${item.icon}</div>`,
+        className: 'custom-div-icon',
+        iconSize: [40, 40]
+      });
+      const marker = L.marker([item.lat, item.lng], { icon }).addTo(mapInstance.current);
+      marker.on('click', () => onSelect(item));
+      markersRef.current[`item_${item.id}`] = marker;
+    });
 
-  if (!target) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full p-6 text-center">
-        <Crosshair className="w-16 h-16 text-gray-500 mb-4" />
-        <h2 className="text-xl font-bold mb-2">未鎖定目標</h2>
-        <p className="text-gray-400 mb-6">請先在雷達地圖上點選一個距離夠近的地標。</p>
-        <button onClick={onCancel} className="px-6 py-2 bg-gray-700 rounded-full font-bold">返回地圖</button>
-      </div>
-    );
-  }
+  }, [location, landmarks, items, profile, onSelect]);
 
   return (
-    <div className="relative w-full h-full bg-black">
-      {/* 攝影機畫面 */}
-      <video 
-        ref={videoRef} 
-        autoPlay 
-        playsInline 
-        muted 
-        className="absolute inset-0 w-full h-full object-cover"
-      />
-      
-      {/* 未獲取權限時的遮罩 */}
-      {!streamActive && (
-        <div className="absolute inset-0 bg-gray-800 flex items-center justify-center p-6 text-center">
-          <p className="text-white">正在請求相機權限...<br/>(若無鏡頭將顯示此黑畫面，仍可進行測試)</p>
-        </div>
-      )}
+    <div className="w-full h-full relative">
+      <div ref={mapRef} className="w-full h-full z-10" />
+      {/* 遮罩裝飾 */}
+      <div className="absolute inset-0 pointer-events-none z-20 shadow-[inset_0_0_100px_rgba(0,0,0,0.5)]"></div>
+      <div className="absolute bottom-6 left-6 right-6 z-30 bg-black/40 backdrop-blur-md p-4 rounded-3xl border border-white/10 text-xs flex items-center gap-3">
+        <Sparkles className="text-yellow-400 w-5 h-5" />
+        <span>直接在地圖上點擊「地標」或「物資」即可觸發 AR 互動。</span>
+      </div>
+    </div>
+  );
+}
 
-      {/* AR 準罩與 UI */}
-      <div className="absolute inset-0 flex flex-col justify-between p-6 z-10 pointer-events-none">
-        <div className="bg-black/50 backdrop-blur text-white p-4 rounded-xl text-center border border-white/20">
-          <h2 className="text-xl font-bold text-yellow-400">正在鎖定: {target.name}</h2>
-          <p className="text-sm text-gray-300">目前擁有者: {target.ownerName || '無'}</p>
+// ==========================================
+// AR 相機與競技場 (其餘組件保持原邏輯)
+// ==========================================
+function ARScreen({ target, onCapture, onPickup, onCancel, location }) {
+  const videoRef = useRef(null);
+  useEffect(() => {
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      .then(s => { if(videoRef.current) videoRef.current.srcObject = s; })
+      .catch(console.error);
+  }, []);
+  const isItem = target && target.icon;
+  const dist = target ? getDistance(location.lat, location.lng, target.lat, target.lng) : 999;
+  return (
+    <div className="w-full h-full bg-black relative">
+      <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 w-full h-full object-cover opacity-60" />
+      <div className="absolute inset-0 flex flex-col items-center justify-between p-10 z-10 pointer-events-none">
+        <div className="w-full bg-black/60 backdrop-blur p-5 rounded-3xl border border-white/20 text-center">
+          <h2 className="text-2xl font-black text-yellow-400">{target?.name || '掃描地標中'}</h2>
+          <p className="text-sm text-gray-400">距離: {Math.round(dist)} 公尺</p>
         </div>
-
-        {/* 準心 */}
-        <div className="flex-1 flex items-center justify-center relative">
-          <div className={`w-48 h-48 border-4 border-dashed rounded-full flex items-center justify-center transition-colors duration-300 ${peeing ? 'border-yellow-400 scale-110' : 'border-white/50'}`}>
-            <Crosshair className="w-12 h-12 text-white/50" />
-          </div>
-          
-          {/* 撒尿動畫特效 */}
-          {peeing && (
-            <div className="absolute bottom-1/2 flex flex-col items-center">
-              <Droplets className="w-16 h-16 text-yellow-400 animate-bounce" fill="currentColor" />
-              <div className="text-yellow-400 font-bold mt-2 text-xl drop-shadow-md">佔領中...</div>
-            </div>
+        <div className="text-9xl animate-bounce filter drop-shadow-[0_0_30px_white]">{target?.icon || '🚩'}</div>
+        <div className="w-full flex justify-between items-center pointer-events-auto">
+          <button onClick={onCancel} className="bg-gray-800 p-6 rounded-full text-white font-bold">離開</button>
+          {dist < 60 ? (
+            <button onClick={() => isItem ? onPickup(target) : onCapture(target)} className="bg-yellow-500 text-black px-12 py-6 rounded-full font-black text-2xl shadow-2xl">
+              {isItem ? '撿起物資' : '宣示領地'}
+            </button>
+          ) : (
+            <div className="bg-red-600 px-6 py-3 rounded-full text-sm font-bold animate-pulse">距離地標太遠了</div>
           )}
         </div>
-
-        <div className="flex justify-between items-center pointer-events-auto">
-          <button onClick={onCancel} className="p-4 bg-red-600 rounded-full shadow-lg text-white font-bold">
-            取消
-          </button>
-          
-          <button 
-            onClick={handlePee}
-            disabled={peeing}
-            className={`px-8 py-5 rounded-full shadow-lg font-bold text-xl transition-transform ${peeing ? 'bg-gray-500 scale-95' : 'bg-yellow-500 hover:bg-yellow-400 text-black hover:scale-105'}`}
-          >
-            {peeing ? '宣示主權中...' : '💦 撒尿佔領'}
-          </button>
-        </div>
       </div>
     </div>
   );
 }
 
-// ==========================================
-// 背包畫面
-// ==========================================
-function BackpackScreen({ profile }) {
-  const items = profile.inventory || [];
-  const groupedItems = items.reduce((acc, curr) => {
-    acc[curr.type] = (acc[curr.type] || 0) + 1;
-    return acc;
-  }, {});
+function ArenaScreen({ user, profile, location, onBattle }) {
+  const [onlinePlayers, setOnlinePlayers] = useState([]);
+  useEffect(() => {
+    const presenceRef = doc(db, 'artifacts', appId, 'public', 'data', 'onlinePlayers', user.uid);
+    const update = () => setDoc(presenceRef, { uid: user.uid, name: user.displayName || '狗狗', faction: profile.faction, power: profile.power, lat: location.lat, lng: location.lng, lastActive: Date.now() });
+    update();
+    const interval = setInterval(update, 10000);
+    return () => clearInterval(interval);
+  }, [user, location, profile]);
 
-  const itemInfo = {
-    bone: { name: '大骨頭', icon: '🦴', desc: '增加 5 戰力' },
-    meat: { name: '肉塊', icon: '🥩', desc: '增加 10 戰力' },
-    herb: { name: '療癒草', icon: '🌿', desc: '戰鬥後恢復狀態' },
-    shoe: { name: '破鞋子', icon: '👟', desc: '主人幫的最愛玩具' }
-  };
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'onlinePlayers'), (snap) => {
+      const now = Date.now();
+      setOnlinePlayers(snap.docs.map(d => d.data()).filter(p => p.uid !== user.uid && (now - p.lastActive < 30000)));
+    });
+    return () => unsubscribe();
+  }, [user.uid]);
 
   return (
-    <div className="p-6 h-full overflow-y-auto pb-24">
-      <h2 className="text-2xl font-bold mb-6 flex items-center gap-2"><Backpack /> 我的背包</h2>
-      
-      {items.length === 0 ? (
-        <div className="text-center text-gray-400 mt-20">
-          <div className="text-6xl mb-4">🎒</div>
-          <p>背包空空如也，去地圖上尋寶吧！</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-4">
-          {Object.entries(groupedItems).map(([type, count]) => (
-            <div key={type} className="bg-gray-800 border border-gray-700 rounded-xl p-4 flex flex-col items-center relative">
-              <span className="absolute top-2 right-2 bg-yellow-500 text-black text-xs font-bold px-2 py-1 rounded-full">
-                x{count}
-              </span>
-              <div className="text-5xl mb-2 drop-shadow-md">{itemInfo[type].icon}</div>
-              <h3 className="font-bold">{itemInfo[type].name}</h3>
-              <p className="text-xs text-gray-400 mt-1 text-center">{itemInfo[type].desc}</p>
+    <div className="p-6 h-full flex flex-col">
+      <h2 className="text-3xl font-black mb-6 flex items-center gap-2"><Sword className="text-red-500" /> 即時挑戰</h2>
+      <div className="space-y-4">
+        {onlinePlayers.map(p => (
+          <div key={p.uid} className="bg-gray-800 p-5 rounded-3xl flex items-center justify-between border border-white/5 shadow-xl">
+            <div className="flex items-center gap-4">
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-3xl ${FACTIONS[p.faction].color}`}>{FACTIONS[p.faction].icon}</div>
+              <div>
+                <div className="font-bold text-lg">{p.name}</div>
+                <div className="text-xs text-gray-500">距離: {Math.round(getDistance(location.lat, location.lng, p.lat, p.lng))}m | 戰力: {p.power}</div>
+              </div>
             </div>
-          ))}
+            <button onClick={() => onBattle(p)} className="bg-red-600 hover:bg-red-500 px-6 py-3 rounded-2xl font-black shadow-lg">決鬥</button>
+          </div>
+        ))}
+        {onlinePlayers.length === 0 && <div className="text-center py-20 text-gray-600 italic">附近沒有其他在線狗狗...</div>}
+      </div>
+    </div>
+  );
+}
+
+function BattleView({ player, opponent, onEnd }) {
+  const [playerHp, setPlayerHp] = useState(player.power * 10);
+  const [oppHp, setOppHp] = useState(opponent.power * 10);
+  const [turn, setTurn] = useState('player');
+  const [res, setRes] = useState(null);
+
+  useEffect(() => {
+    if(res) return;
+    if(playerHp <= 0) return setRes('lose');
+    if(oppHp <= 0) return setRes('win');
+    const timer = setTimeout(() => {
+      if(turn === 'player') {
+        setOppHp(h => Math.max(0, h - player.power));
+        setTurn('opponent');
+      } else {
+        setPlayerHp(h => Math.max(0, h - opponent.power));
+        setTurn('player');
+      }
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [turn, playerHp, oppHp, res]);
+
+  return (
+    <div className="h-full bg-slate-900 flex flex-col p-10 items-center justify-between">
+      <div className="text-center w-full">
+        <div className={`w-28 h-28 mx-auto rounded-3xl flex items-center justify-center text-6xl shadow-2xl ${FACTIONS[opponent.faction].color}`}>{FACTIONS[opponent.faction].icon}</div>
+        <h3 className="mt-4 font-bold text-xl">{opponent.name}</h3>
+        <div className="w-full h-4 bg-gray-800 rounded-full mt-4 overflow-hidden border border-white/10">
+          <div className="h-full bg-red-500 transition-all" style={{ width: `${(oppHp/(opponent.power*10))*100}%` }}></div>
+        </div>
+      </div>
+      <div className="text-6xl font-black italic text-red-600 animate-bounce">VS</div>
+      <div className="text-center w-full">
+        <div className="w-full h-4 bg-gray-800 rounded-full mb-4 overflow-hidden border border-white/10">
+          <div className="h-full bg-green-500 transition-all" style={{ width: `${(playerHp/(player.power*10))*100}%` }}></div>
+        </div>
+        <h3 className="font-bold text-xl mb-4">我方勇士</h3>
+        <div className={`w-28 h-28 mx-auto rounded-3xl flex items-center justify-center text-6xl shadow-2xl ${FACTIONS[player.faction].color}`}>{FACTIONS[player.faction].icon}</div>
+      </div>
+      {res && (
+        <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center p-10 z-[100] text-center">
+          <Trophy className={`w-32 h-32 mb-6 ${res === 'win' ? 'text-yellow-400' : 'text-gray-600'}`} />
+          <h2 className="text-5xl font-black mb-4">{res === 'win' ? '你贏了！' : '戰敗...'}</h2>
+          <button onClick={() => onEnd(res === 'win')} className="bg-white text-black px-12 py-5 rounded-full font-black text-xl mt-10 shadow-2xl">返回</button>
         </div>
       )}
     </div>
   );
 }
 
-// ==========================================
-// 競技場畫面
-// ==========================================
-function ArenaScreen({ profile }) {
+function BackpackScreen({ profile }) {
+  const inv = profile.inventory || [];
   return (
-    <div className="p-6 h-full overflow-y-auto pb-24 flex flex-col">
-      <h2 className="text-2xl font-bold mb-6 flex items-center gap-2"><Trophy className="text-yellow-400"/> 街頭競技場</h2>
-      
-      {/* 玩家狀態 */}
-      <div className="bg-gray-800 rounded-2xl p-6 mb-6 shadow-lg border border-gray-700">
-        <div className="flex justify-between items-center mb-4">
-          <div className="flex items-center gap-3">
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl ${FACTIONS[profile.faction].color}`}>
-              {FACTIONS[profile.faction].icon}
-            </div>
-            <div>
-              <div className="font-bold text-lg">你的戰鬥面板</div>
-              <div className={`text-sm ${FACTIONS[profile.faction].text}`}>{FACTIONS[profile.faction].name}</div>
-            </div>
+    <div className="p-6 h-full overflow-y-auto pb-24">
+      <h2 className="text-3xl font-black mb-8 flex items-center gap-3"><Backpack className="text-yellow-400" /> 背包項目 ({inv.length})</h2>
+      <div className="grid grid-cols-2 gap-4">
+        {inv.map((it, idx) => (
+          <div key={idx} className="bg-gray-800 p-6 rounded-[32px] flex flex-col items-center border border-white/5 shadow-lg">
+            <div className="text-6xl mb-4">{it.icon}</div>
+            <div className="font-bold text-lg">{it.name}</div>
+            <div className="text-xs text-yellow-500 mt-2">戰力加成 +{it.power}</div>
           </div>
-          <div className="text-right">
-            <div className="text-xs text-gray-400">等級</div>
-            <div className="text-2xl font-bold">Lv.{profile.level}</div>
-          </div>
-        </div>
-        
-        <div className="grid grid-cols-2 gap-4">
-          <div className="bg-gray-900 rounded-lg p-3 flex items-center gap-3">
-            <Zap className="text-yellow-400 w-5 h-5" />
-            <div>
-              <div className="text-xs text-gray-400">總戰力</div>
-              <div className="font-bold">{profile.power}</div>
-            </div>
-          </div>
-          <div className="bg-gray-900 rounded-lg p-3 flex items-center gap-3">
-            <Shield className="text-blue-400 w-5 h-5" />
-            <div>
-              <div className="text-xs text-gray-400">防禦力</div>
-              <div className="font-bold">{Math.floor(profile.power * 0.4)}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 尋找對手 */}
-      <div className="flex-1 flex flex-col items-center justify-center">
-        <Swords className="w-20 h-20 text-gray-600 mb-4" />
-        <h3 className="text-xl font-bold mb-2">匹配對戰系統 (開發中)</h3>
-        <p className="text-gray-400 text-center mb-6">
-          提昇戰力、收集裝備！<br/>未來將能與其他幫派的狗狗進行 1v1 決鬥，爭奪街頭霸主的稱號！
-        </p>
-        <button className="bg-gray-700 text-gray-400 px-8 py-3 rounded-full font-bold cursor-not-allowed">
-          尋找對手...
-        </button>
+        ))}
+        {inv.length === 0 && <div className="col-span-2 py-20 text-center text-gray-600 italic">背包空空如也...</div>}
       </div>
     </div>
   );
 }
 
-// ==========================================
-// 底部導航按鈕元件
-// ==========================================
-function NavButton({ icon, label, active, onClick }) {
+function NavBtn({ icon, label, active, onClick }) {
   return (
-    <button 
-      onClick={onClick}
-      className={`flex flex-col items-center justify-center w-16 transition-colors ${active ? 'text-yellow-400' : 'text-gray-500 hover:text-gray-300'}`}
-    >
-      <div className={`mb-1 transition-transform ${active ? 'scale-110' : ''}`}>
-        {icon}
-      </div>
-      <span className="text-[10px] font-medium">{label}</span>
+    <button onClick={onClick} className={`flex flex-col items-center gap-1 w-20 transition-all ${active ? 'text-yellow-400 scale-110' : 'text-gray-500 hover:text-gray-400'}`}>
+      <div className={`${active ? 'bg-yellow-400/10 p-2.5 rounded-2xl' : 'p-2.5'}`}>{icon}</div>
+      <span className="text-[10px] font-bold tracking-widest">{label}</span>
     </button>
   );
 }
