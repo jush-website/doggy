@@ -63,16 +63,6 @@ export default function App() {
   // 初始化 Firebase Auth
   useEffect(() => {
     if (!auth) return;
-    
-    // 如果在特定預覽環境有提供初始 Token，自動嘗試登入
-    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-      signInWithCustomToken(auth, __initial_auth_token).catch((err) => {
-        // 忽略 token 不匹配的錯誤 (因為玩家換成了自己的 Firebase 專案，平台預設的 token 自然會失效)
-        if (err.code !== 'auth/custom-token-mismatch') {
-          console.error(err);
-        }
-      });
-    }
 
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
